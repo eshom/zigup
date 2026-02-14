@@ -1182,79 +1182,14 @@ const Release = struct {
 // The Zig release where the OS-ARCH in the url was swapped to ARCH-OS
 const arch_os_swap_release: Release = .{ .major = 0, .minor = 14, .patch = 1 };
 
-const SemanticVersion = struct {
-    const max_pre = 50;
-    const max_build = 50;
-    const max_string = 50 + max_pre + max_build;
-
-    major: usize,
-    minor: usize,
-    patch: usize,
-    pre: ?std.BoundedArray(u8, max_pre),
-    build: ?std.BoundedArray(u8, max_build),
-
-    pub fn array(self: *const SemanticVersion) std.BoundedArray(u8, max_string) {
-        var result: std.BoundedArray(u8, max_string) = undefined;
-        const roundtrip = std.fmt.bufPrint(&result.buffer, "{}", .{self}) catch unreachable;
-        result.len = roundtrip.len;
-        return result;
-    }
-
-    pub fn parse(s: []const u8) ?SemanticVersion {
-        const parsed = std.SemanticVersion.parse(s) catch |e| switch (e) {
-            error.Overflow, error.InvalidVersion => return null,
-        };
-        std.debug.assert(s.len <= max_string);
-
-        var result: SemanticVersion = .{
-            .major = parsed.major,
-            .minor = parsed.minor,
-            .patch = parsed.patch,
-            .pre = if (parsed.pre) |pre| std.BoundedArray(u8, max_pre).init(pre.len) catch |e| switch (e) {
-                error.Overflow => std.debug.panic("semantic version pre '{s}' is too long (max is {})", .{ pre, max_pre }),
-            } else null,
-            .build = if (parsed.build) |build| std.BoundedArray(u8, max_build).init(build.len) catch |e| switch (e) {
-                error.Overflow => std.debug.panic("semantic version build '{s}' is too long (max is {})", .{ build, max_build }),
-            } else null,
-        };
-        if (parsed.pre) |pre| @memcpy(result.pre.?.slice(), pre);
-        if (parsed.build) |build| @memcpy(result.build.?.slice(), build);
-
-        {
-            // sanity check, ensure format gives us the same string back we just parsed
-            const roundtrip = result.array();
-            if (!std.mem.eql(u8, roundtrip.slice(), s)) std.debug.panic(
-                "codebug parse/format version mismatch:\nparsed: '{s}'\nformat: '{s}'\n",
-                .{ s, roundtrip.slice() },
-            );
-        }
-
-        return result;
-    }
-    pub fn ref(self: *const SemanticVersion) std.SemanticVersion {
-        return .{
-            .major = self.major,
-            .minor = self.minor,
-            .patch = self.patch,
-            .pre = if (self.pre) |*pre| pre.slice() else null,
-            .build = if (self.build) |*build| build.slice() else null,
-        };
-    }
-    pub fn format(
-        self: SemanticVersion,
-        comptime fmt: []const u8,
-        options: std.fmt.FormatOptions,
-        writer: anytype,
-    ) !void {
-        try self.ref().format(fmt, options, writer);
-    }
-};
-
 fn getDefaultUrl(allocator: Allocator, compiler_version: []const u8) ![]const u8 {
-    const sv = SemanticVersion.parse(compiler_version) orelse errExit(
-        "invalid zig version '{s}', unable to create a download URL for it",
-        .{compiler_version},
-    );
+    const sv = std.SemanticVersion.parse(compiler_version) catch |err| switch (err) {
+        error.Overflow, error.InvalidVersion => errExit(
+            "invalid zig version '{s}', unable to create a download URL for it",
+            .{compiler_version},
+        ),
+    };
+
     if (sv.pre != null or sv.build != null) return try std.fmt.allocPrint(
         allocator,
         "https://ziglang.org/builds/zig-" ++ arch_os ++ "-{0s}." ++ archive_ext,
