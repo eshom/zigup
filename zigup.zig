@@ -55,7 +55,7 @@ const DownloadResult = union(enum) {
         }
     }
 };
-fn download(allocator: Allocator, url: []const u8, writer: anytype) DownloadResult {
+fn download(allocator: Allocator, url: []const u8, writer: *std.Io.Writer) DownloadResult {
     const uri = std.Uri.parse(url) catch |err| return .{ .err = std.fmt.allocPrint(
         allocator,
         "the URL is invalid ({s})",
@@ -109,8 +109,10 @@ fn download(allocator: Allocator, url: []const u8, writer: anytype) DownloadResu
             "failed to read the HTTP response body with {s}'",
             .{@errorName(err)},
         ) catch |e| oom(e) };
-        if (len == 0)
+        if (len == 0) {
+            try writer.flush();
             return .ok;
+        }
         writer.writeAll(buf[0..len]) catch |err| return .{ .err = std.fmt.allocPrint(
             allocator,
             "failed to write the HTTP response body with {s}'",
@@ -915,9 +917,9 @@ fn printDefaultCompiler(allocator: Allocator) !void {
     var buf: [4096]u8 = undefined;
     var stdout = std.fs.File.stdout().writer(&buf);
     if (default_compiler_opt) |default_compiler| {
-        try stdout.interafce.print("{s}\n", .{default_compiler});
+        try stdout.interface.print("{s}\n", .{default_compiler});
     } else {
-        try stdout.interafce.writeAll("<no-default>\n");
+        try stdout.interface.writeAll("<no-default>\n");
     }
     try stdout.interface.flush();
 }
@@ -1234,7 +1236,9 @@ fn installCompiler(allocator: Allocator, compiler_dir: []const u8, url: []const 
             // note: important to close the file before we handle errors below
             //       since it will delete the parent directory of this file
             defer file.close();
-            break :blk download(allocator, url, file.writer());
+            var buf: [4096]u8 = undefined;
+            var writer = file.writer(&buf);
+            break :blk download(allocator, url, &writer.interface);
         }) {
             .ok => {},
             .err => |err| {
