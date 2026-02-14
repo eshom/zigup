@@ -124,10 +124,10 @@ const DownloadStringResult = union(enum) {
     err: []u8,
 };
 fn downloadToString(allocator: Allocator, url: []const u8) DownloadStringResult {
-    var response_array_list = ArrayList(u8).initCapacity(allocator, 50 * 1024) catch |e| oom(e); // 50 KB (modify if response is expected to be bigger)
-    defer response_array_list.deinit();
-    switch (download(allocator, url, response_array_list.writer())) {
-        .ok => return .{ .ok = response_array_list.toOwnedSlice() catch |e| oom(e) },
+    var response_array_list: std.Io.Writer.Allocating = try .initCapacity(allocator, 50 * 1024) catch |e| oom(e); // 50 KB (modify if response is expected to be bigger)
+    defer response_array_list.deinit(allocator);
+    switch (download(allocator, url, &response_array_list.writer)) {
+        .ok => return .{ .ok = response_array_list.toOwnedSlice(allocator) catch |e| oom(e) },
         .err => |e| return .{ .err = e },
     }
 }
@@ -571,9 +571,17 @@ pub fn runCompiler(allocator: Allocator, args: []const []const u8) !u8 {
         return 1;
     }
 
-    var argv = std.ArrayList([]const u8).init(allocator);
-    try argv.append(try std.fs.path.join(allocator, &.{ compiler_dir, "files", comptime "zig" ++ builtin.target.exeFileExt() }));
-    try argv.appendSlice(args[1..]);
+    // 32 is the manually counted number of possible options and their arguments
+    // rounded up to the next power of two.
+    var argv: ArrayList([]const u8) = try .initCapacity(allocator, 32);
+    // In case implementation ever changes from an arena.
+    defer argv.deinit(allocator);
+    try argv.append(allocator, try std.fs.path.join(allocator, &.{
+        compiler_dir,
+        "files",
+        comptime "zig" ++ builtin.target.exeFileExt(),
+    }));
+    try argv.appendSlice(allocator, args[1..]);
 
     // TODO: use "execve" if on linux
     var proc = std.process.Child.init(argv.items, allocator);
