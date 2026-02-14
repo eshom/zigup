@@ -217,7 +217,10 @@ fn saveInstallDir(allocator: Allocator, maybe_dir: ?[]const u8) !void {
         {
             const file = try std.fs.cwd().createFile(setting_path, .{});
             defer file.close();
-            try file.writer().writeAll(d);
+            var buf: [4096]u8 = undefined;
+            var writer = file.writer(&buf);
+            try writer.interface.writeAll(d);
+            try writer.interface.flush();
         }
 
         // sanity check, read it back
