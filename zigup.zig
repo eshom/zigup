@@ -310,7 +310,8 @@ fn help(allocator: Allocator) !void {
         break :blk "unavailable";
     };
 
-    try std.io.getStdErr().writer().print(
+    var stderr = std.fs.File.stderr().writer(&.{});
+    try stderr.interface.print(
         \\Download and manage zig compilers.
         \\
         \\Common Usage:
@@ -422,6 +423,10 @@ pub fn main2() !u8 {
         try help(allocator);
         return 1;
     }
+
+    var buf: [4096]u8 = undefined;
+    var stdout = std.fs.File.stdout().writer(&buf);
+
     if (std.mem.eql(u8, "get-install-dir", args[0])) {
         if (args.len != 1) {
             std.log.err("get-install-dir does not accept any cmdline arguments", .{});
@@ -431,8 +436,9 @@ pub fn main2() !u8 {
             error.AlreadyReported => return 1,
             else => |e| return e,
         };
-        try std.io.getStdOut().writer().writeAll(install_dir);
-        try std.io.getStdOut().writer().writeAll("\n");
+        try stdout.interface.writeAll(install_dir);
+        try stdout.interface.writeAll("\n");
+        try stdout.interface.flush();
         return 0;
     }
     if (std.mem.eql(u8, "set-install-dir", args[0])) {
@@ -461,7 +467,8 @@ pub fn main2() !u8 {
         }
         var download_index = try fetchDownloadIndex(allocator, index_url);
         defer download_index.deinit(allocator);
-        try std.io.getStdOut().writeAll(download_index.text);
+        try stdout.interface.writeAll(download_index.text);
+        try stdout.interface.flush();
         return 0;
     }
     if (std.mem.eql(u8, "fetch", args[0])) {
@@ -747,8 +754,8 @@ fn listCompilers(allocator: Allocator) !void {
         else => return e,
     };
     defer install_dir.close();
-
-    const stdout = std.io.getStdOut().writer();
+    var buf: [4096]u8 = undefined;
+    var stdout = std.fs.File.stdout().writer(&buf);
     {
         var it = install_dir.iterate();
         while (try it.next()) |entry| {
@@ -756,9 +763,10 @@ fn listCompilers(allocator: Allocator) !void {
                 continue;
             if (std.mem.endsWith(u8, entry.name, ".installing"))
                 continue;
-            try stdout.print("{s}\n", .{entry.name});
+            try stdout.interface.print("{s}\n", .{entry.name});
         }
     }
+    try stdout.interface.flush();
 }
 
 fn keepCompiler(allocator: Allocator, compiler_version: []const u8) !void {
@@ -892,12 +900,14 @@ fn getMasterDir(allocator: Allocator, install_dir: *std.fs.Dir) !?[]const u8 {
 fn printDefaultCompiler(allocator: Allocator) !void {
     const default_compiler_opt = try getDefaultCompiler(allocator);
     defer if (default_compiler_opt) |default_compiler| allocator.free(default_compiler);
-    const stdout = std.io.getStdOut().writer();
+    var buf: [4096]u8 = undefined;
+    var stdout = std.fs.File.stdout().writer(&buf);
     if (default_compiler_opt) |default_compiler| {
-        try stdout.print("{s}\n", .{default_compiler});
+        try stdout.interafce.print("{s}\n", .{default_compiler});
     } else {
-        try stdout.writeAll("<no-default>\n");
+        try stdout.interafce.writeAll("<no-default>\n");
     }
+    try stdout.interface.flush();
 }
 
 const ExistVerify = enum { existence_verified, verify_existence };
