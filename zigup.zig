@@ -730,6 +730,7 @@ pub fn loggyUpdateSymlink(target_path: []const u8, sym_link_path: []const u8, fl
 fn existsAbsolute(absolutePath: []const u8) !bool {
     std.fs.cwd().access(absolutePath, .{}) catch |e| switch (e) {
         error.FileNotFound => return false,
+        error.AccessDenied => return e,
         error.PermissionDenied => return e,
         error.InputOutput => return e,
         error.SystemResources => return e,
