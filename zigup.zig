@@ -99,14 +99,11 @@ fn download(allocator: Allocator, url: []const u8, writer: *std.Io.Writer) Downl
         .{ @intFromEnum(response.head.status), response.head.status.phrase() orelse "" },
     ) catch |e| oom(e) };
 
-    const content_length = response.head.content_length orelse return .{ .err = std.fmt.allocPrint(
-        allocator,
-        "the HTTP server replied without content'",
-        .{},
-    ) catch |e| oom(e) };
+    const decompress_buf = allocator.alloc(u8, response.head.content_encoding.minBufferCapacity()) catch |e| oom(e);
+    var decompress: std.http.Decompress = undefined;
 
     var buf: [4096]u8 = undefined;
-    var body_reader = response.reader(&buf);
+    const body_reader = response.readerDecompressing(&buf, &decompress, decompress_buf);
 
     const pumped = body_reader.streamRemaining(writer) catch |err| return switch (err) {
         error.ReadFailed => .{ .err = std.fmt.allocPrint(
@@ -121,8 +118,7 @@ fn download(allocator: Allocator, url: []const u8, writer: *std.Io.Writer) Downl
         ) catch |e| oom(e) },
     };
 
-    // sanity
-    std.debug.assert(pumped == content_length);
+    std.log.info("downloaded {B} (decompressed)", .{pumped});
 
     writer.flush() catch |err| return .{ .err = std.fmt.allocPrint(
         allocator,
