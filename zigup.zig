@@ -58,67 +58,79 @@ const DownloadResult = union(enum) {
 fn download(allocator: Allocator, url: []const u8, writer: *std.Io.Writer) DownloadResult {
     const uri = std.Uri.parse(url) catch |err| return .{ .err = std.fmt.allocPrint(
         allocator,
-        "the URL is invalid ({s})",
-        .{@errorName(err)},
+        "the URL is invalid ({t})",
+        .{err},
     ) catch |e| oom(e) };
 
-    var client = std.http.Client{ .allocator = allocator };
+    var client: std.http.Client = .{ .allocator = allocator };
     defer client.deinit();
 
     client.initDefaultProxies(allocator) catch |err| return .{ .err = std.fmt.allocPrint(
         allocator,
-        "failed to query the HTTP proxy settings with {s}",
-        .{@errorName(err)},
+        "failed to query the HTTP proxy settings with '{t}'",
+        .{err},
     ) catch |e| oom(e) };
 
-    var header_buffer: [4096]u8 = undefined;
-    var request = client.open(.GET, uri, .{
-        .server_header_buffer = &header_buffer,
+    var request = client.request(.GET, uri, .{
         .keep_alive = false,
     }) catch |err| return .{ .err = std.fmt.allocPrint(
         allocator,
-        "failed to connect to the HTTP server with {s}",
-        .{@errorName(err)},
+        "failed to connect to the HTTP server with '{t}'",
+        .{err},
     ) catch |e| oom(e) };
 
     defer request.deinit();
 
-    request.send() catch |err| return .{ .err = std.fmt.allocPrint(
+    request.sendBodiless() catch |err| return .{ .err = std.fmt.allocPrint(
         allocator,
-        "failed to send the HTTP request with {s}",
-        .{@errorName(err)},
-    ) catch |e| oom(e) };
-    request.wait() catch |err| return .{ .err = std.fmt.allocPrint(
-        allocator,
-        "failed to read the HTTP response headers with {s}",
-        .{@errorName(err)},
+        "failed to send the HTTP request with '{t}'",
+        .{err},
     ) catch |e| oom(e) };
 
-    if (request.response.status != .ok) return .{ .err = std.fmt.allocPrint(
+    var response = request.receiveHead(&.{}) catch |err| return .{ .err = std.fmt.allocPrint(
+        allocator,
+        "failed to receive the HTTP response with '{t}'",
+        .{err},
+    ) catch |e| oom(e) };
+
+    if (response.head.status != .ok) return .{ .err = std.fmt.allocPrint(
         allocator,
         "the HTTP server replied with unsuccessful response '{d} {s}'",
-        .{ @intFromEnum(request.response.status), request.response.status.phrase() orelse "" },
+        .{ @intFromEnum(response.head.status), response.head.status.phrase() orelse "" },
     ) catch |e| oom(e) };
 
-    // TODO: we take advantage of request.response.content_length
+    const content_length = response.head.content_length orelse return .{ .err = std.fmt.allocPrint(
+        allocator,
+        "the HTTP server replied without content'",
+        .{},
+    ) catch |e| oom(e) };
 
     var buf: [4096]u8 = undefined;
-    while (true) {
-        const len = request.reader().read(&buf) catch |err| return .{ .err = std.fmt.allocPrint(
+    var body_reader = response.reader(&buf);
+
+    const pumped = body_reader.streamRemaining(writer) catch |err| return switch (err) {
+        error.ReadFailed => .{ .err = std.fmt.allocPrint(
             allocator,
-            "failed to read the HTTP response body with {s}'",
-            .{@errorName(err)},
-        ) catch |e| oom(e) };
-        if (len == 0) {
-            try writer.flush();
-            return .ok;
-        }
-        writer.writeAll(buf[0..len]) catch |err| return .{ .err = std.fmt.allocPrint(
+            "failed to read the HTTP response body with '{t}'",
+            .{err},
+        ) catch |e| oom(e) },
+        error.WriteFailed => .{ .err = std.fmt.allocPrint(
             allocator,
-            "failed to write the HTTP response body with {s}'",
-            .{@errorName(err)},
-        ) catch |e| oom(e) };
-    }
+            "failed to write the HTTP response body with '{t}'",
+            .{err},
+        ) catch |e| oom(e) },
+    };
+
+    // sanity
+    std.debug.assert(pumped == content_length);
+
+    writer.flush() catch |err| return .{ .err = std.fmt.allocPrint(
+        allocator,
+        "failed to fully write the HTTP response body with '{t}'",
+        .{err},
+    ) catch |e| oom(e) };
+
+    return .ok;
 }
 
 const DownloadStringResult = union(enum) {
